@@ -9,6 +9,7 @@ from app.config import settings
 
 
 logger = logging.getLogger(__name__)
+_PHONE_PATTERN = r"\+?\d[\d\s-]{8,}\d"
 
 
 @dataclass
@@ -19,13 +20,23 @@ class ContactInfo:
 
 
 def extract_contact_info(message: str) -> ContactInfo | None:
-    email_match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", message)
-    phone_match = re.search(r"\+?[0-9][0-9\-\s]{6,}[0-9]", message)
+    email = None
+    for token in message.replace("\n", " ").split():
+        cleaned = token.strip(".,;:!?()[]{}<>\"'")
+        if "@" not in cleaned or cleaned.count("@") != 1:
+            continue
+        local, domain = cleaned.split("@")
+        if local and "." in domain and not domain.startswith(".") and not domain.endswith("."):
+            email = cleaned
+            break
+
+    # Accepts basic international/local patterns with 8+ digits (e.g., "+1 555-123-4567", "0912 345 6789").
+    phone_match = re.search(_PHONE_PATTERN, message)
     name_match = re.search(r"(?:i am|i'm|name is)\s+([A-Za-z][A-Za-z\s'-]{1,40})", message, re.IGNORECASE)
 
     info = ContactInfo(
         name=name_match.group(1).strip() if name_match else None,
-        email=email_match.group(0) if email_match else None,
+        email=email,
         phone=phone_match.group(0).strip() if phone_match else None,
     )
     if not info.email and not info.phone:
@@ -35,7 +46,7 @@ def extract_contact_info(message: str) -> ContactInfo | None:
 
 class OdooClient:
     def __init__(self) -> None:
-        self._enabled = all([settings.odoo_url, settings.odoo_db, settings.odoo_username, settings.odoo_password])
+        self._enabled = all((settings.odoo_url, settings.odoo_db, settings.odoo_username, settings.odoo_password))
 
     def _authenticate(self) -> tuple[int, xmlrpc.client.ServerProxy] | None:
         if not self._enabled:
