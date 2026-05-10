@@ -24,6 +24,8 @@ _DEFAULT_KNOWLEDGE = [
     "Assessment question math: What is 9 + 6? Answer: 15",
     "Assessment question english: Write one sentence using the word 'because'.",
 ]
+_CHUNK_SIZE = 700
+_CHUNK_OVERLAP = 100
 
 
 def _load_pdf_docs(pdf_path: Path) -> list[Document]:
@@ -38,7 +40,10 @@ def _load_pdf_docs(pdf_path: Path) -> list[Document]:
 
 def build_vectorstore() -> FAISS:
     docs = _load_pdf_docs(settings.tuition_pdf_path)
-    chunks = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=100).split_documents(docs)
+    chunks = RecursiveCharacterTextSplitter(
+        chunk_size=_CHUNK_SIZE,
+        chunk_overlap=_CHUNK_OVERLAP,
+    ).split_documents(docs)
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     return FAISS.from_documents(chunks, embeddings)
 
@@ -50,3 +55,7 @@ def get_vectorstore() -> FAISS:
             if _vectorstore is None:
                 _vectorstore = build_vectorstore()
     return _vectorstore
+
+
+def has_vectorstore() -> bool:
+    return _vectorstore is not None

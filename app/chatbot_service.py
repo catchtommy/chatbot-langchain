@@ -5,6 +5,7 @@ import logging
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import Runnable
 from langchain_groq import ChatGroq
 
 from app.assessment import (
@@ -27,7 +28,7 @@ class TuitionChatbotService:
         self._last_lead_by_session: dict[str, int] = {}
         self._chain = self._build_chain()
 
-    def _build_chain(self):
+    def _build_chain(self) -> Runnable | None:
         if not settings.groq_api_key:
             logger.warning("GROQ_API_KEY not set, fallback responses will be used")
             return None
@@ -45,7 +46,11 @@ Question:
 {input}
 """.strip()
         )
-        retriever = get_vectorstore().as_retriever(search_kwargs={"k": 4})
+        try:
+            retriever = get_vectorstore().as_retriever(search_kwargs={"k": 4})
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.warning("Vector store unavailable, fallback responses will be used: %s", exc)
+            return None
         qa_chain = create_stuff_documents_chain(llm, prompt)
         return create_retrieval_chain(retriever, qa_chain)
 
@@ -58,8 +63,12 @@ Question:
 
         try:
             result = self._chain.invoke({"input": message})
-            return str(result.get("answer", "I do not have enough information right now."))
-        except Exception as exc:  # noqa: BLE001
+            answer = result.get("answer")
+            if answer is None:
+                logger.warning("RAG response missing 'answer' key: %s", result)
+                return "I do not have enough information right now."
+            return str(answer)
+        except (RuntimeError, ValueError, OSError) as exc:
             logger.warning("RAG chain invocation failed: %s", exc)
             return "I am having trouble answering right now. Please try again in a moment."
 

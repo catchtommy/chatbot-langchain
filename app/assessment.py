@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Dict
 
-from app.rag import get_vectorstore
+from app.rag import get_vectorstore, has_vectorstore
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -12,7 +15,8 @@ class AssessmentState:
     expected_answer: str | None
 
 
-_sessions: Dict[str, AssessmentState] = {}
+_sessions: dict[str, AssessmentState] = {}
+MIN_SENTENCE_WORDS = 4
 
 
 def _extract_expected_answer(question: str) -> str | None:
@@ -31,11 +35,15 @@ def pick_assessment_question(message: str) -> str:
     subject = "math" if "math" in message.lower() else "english"
     query = f"assessment question {subject}"
 
-    docs = get_vectorstore().similarity_search(query, k=2)
-    for doc in docs:
-        text = doc.page_content.strip()
-        if "assessment question" in text.lower() and subject in text.lower():
-            return text
+    if has_vectorstore():
+        try:
+            docs = get_vectorstore().similarity_search(query, k=2)
+            for doc in docs:
+                text = doc.page_content.strip()
+                if "assessment question" in text.lower() and subject in text.lower():
+                    return text
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.warning("Assessment retrieval fallback used: %s", exc)
 
     if subject == "math":
         return "Assessment question math: What is 9 + 6? Answer: 15"
@@ -55,8 +63,18 @@ def has_pending_assessment(session_id: str) -> bool:
     return session_id in _sessions
 
 
+def clear_sessions() -> None:
+    _sessions.clear()
+
+
+def set_assessment_state_for_test(session_id: str, state: AssessmentState) -> None:
+    _sessions[session_id] = state
+
+
 def grade_assessment_answer(session_id: str, answer: str) -> tuple[str, bool]:
-    state = _sessions.pop(session_id)
+    state = _sessions.pop(session_id, None)
+    if state is None:
+        return "No active assessment found. Ask for an assessment to begin.", False
     normalized = answer.strip().lower()
 
     if state.expected_answer:
@@ -65,7 +83,7 @@ def grade_assessment_answer(session_id: str, answer: str) -> tuple[str, bool]:
             return "✅ Correct answer. Great job!", True
         return f"❌ Not quite. Expected answer: {state.expected_answer}", False
 
-    passed = "because" in normalized and len(normalized.split()) >= 4
+    passed = "because" in normalized and len(normalized.split()) >= MIN_SENTENCE_WORDS
     if passed:
         return "✅ Good sentence. Assessment passed.", True
     return "❌ Please answer in a full sentence using 'because'.", False
